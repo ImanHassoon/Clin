@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PATIENT
+  DOCTOR
+  CLINIC_ADMIN
+}
+
+enum LinkStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum CaseStatus {
+  OPEN
+  CLOSED
+}
+
+enum TestOrderStatus {
+  ORDERED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ImagingType {
+  XRAY
+  CT
+  MRI
+  ULTRASOUND
+  OTHER
+}
+
+enum DocumentOwnerType {
+  TEST_RESULT
+  IMAGING_STUDY
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  phone          String?
+  firstName      String
+  lastName       String
+  passwordHash   String
+  role           Role
+  isActive       Boolean   @default(true)
+  mfaEnabled     Boolean   @default(false)
+  mfaSecret      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  doctorProfile  DoctorProfile?
+  patientProfile PatientProfile?
+  clinicStaffOf  ClinicStaff[]
+  refreshTokens  RefreshToken[]
+  auditLogs      AuditLog[]      @relation("ActorAuditLogs")
+}
+
+model Clinic {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  phone     String?
+  createdAt DateTime @default(now())
+
+  doctors DoctorProfile[]
+  staff   ClinicStaff[]
+}
+
+model ClinicStaff {
+  id       String @id @default(uuid())
+  userId   String
+  clinicId String
+
+  user   User   @relation(fields: [userId], references: [id])
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@unique([userId, clinicId])
+}
+
+model DoctorProfile {
+  id            String  @id @default(uuid())
+  userId        String  @unique
+  clinicId      String?
+  specialty     String
+  licenseNumber String
+  bio           String?
+
+  user   User    @relation(fields: [userId], references: [id])
+  clinic Clinic? @relation(fields: [clinicId], references: [id])
+
+  patientLinks   DoctorPatientLink[]
+  appointments   Appointment[]
+  visits         Visit[]
+  diagnoses      Diagnosis[]
+  prescriptions  Prescription[]
+  consents       Consent[]
+}
+
+model PatientProfile {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  dateOfBirth      DateTime?
+  sex              String?
+  bloodType        String?
+  allergies        String?
+  emergencyContact String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  doctorLinks  DoctorPatientLink[]
+  appointments Appointment[]
+  cases        MedicalCase[]
+  visits       Visit[]
+  consents     Consent[]
+  imagingStudies ImagingStudy[]
+}
+
+model DoctorPatientLink {
+  id        String     @id @default(uuid())
+  doctorId  String
+  patientId String
+  status    LinkStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  revokedAt DateTime?
+
+  doctor  DoctorProfile  @relation(fields: [doctorId], references: [id])
+  patient PatientProfile @relation(fields: [patientId], references: [id])
+
+  @@unique([doctorId, patientId])
+}
+
+model Appointment {
+  id          String            @id @default(uuid())
+  patientId   String
+  doctorId    String
+  scheduledAt DateTime
+  durationMin Int               @default(30)
+  status      AppointmentStatus @default(REQUESTED)
+  reason      String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  patient PatientProfile @relation(fields: [patientId], references: [id])
+  doctor  DoctorProfile  @relation(fields: [doctorId], references: [id])
+  visit   Visit?
+}
+
+model MedicalCase {
+  id              String     @id @default(uuid())
+  patientId       String
+  title           String
+  status          CaseStatus @default(OPEN)
+  openedAt        DateTime   @default(now())
+  closedAt        DateTime?
+  primaryDoctorId String?
+
+  patient PatientProfile @relation(fields: [patientId], references: [id])
+  visits  Visit[]
+}
+
+model Visit {
+  id             String   @id @default(uuid())
+  appointmentId  String?  @unique
+  patientId      String
+  doctorId       String
+  caseId         String?
+  visitDate      DateTime @default(now())
+  chiefComplaint String?
+  notes          String?
+  vitalsJson     Json?
+  createdAt      DateTime @default(now())
+
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+  patient     PatientProfile @relation(fields: [patientId], references: [id])
+  doctor      DoctorProfile  @relation(fields: [doctorId], references: [id])
+  case        MedicalCase?   @relation(fields: [caseId], references: [id])
+
+  diagnoses      Diagnosis[]
+  testOrders     TestOrder[]
+  imagingStudies ImagingStudy[]
+  prescriptions  Prescription[]
+}
+
+model Diagnosis {
+  id          String   @id @default(uuid())
+  visitId     String
+  doctorId    String
+  icdCode     String?
+  description String
+  severity    String?
+  createdAt   DateTime @default(now())
+
+  visit  Visit         @relation(fields: [visitId], references: [id])
+  doctor DoctorProfile @relation(fields: [doctorId], references: [id])
+}
+
+model TestOrder {
+  id          String          @id @default(uuid())
+  visitId     String
+  orderedById String
+  testType    String
+  status      TestOrderStatus @default(ORDERED)
+  orderedAt   DateTime        @default(now())
+
+  visit  Visit       @relation(fields: [visitId], references: [id])
+  result TestResult?
+}
+
+model TestResult {
+  id             String    @id @default(uuid())
+  testOrderId    String    @unique
+  resultSummary  String?
+  resultDataJson Json?
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  testOrder TestOrder  @relation(fields: [testOrderId], references: [id])
+  documents Document[]
+}
+
+model ImagingStudy {
+  id          String      @id @default(uuid())
+  visitId     String
+  patientId   String
+  type        ImagingType
+  bodyPart    String?
+  orderedById String
+  performedAt DateTime?
+  notes       String?
+  createdAt   DateTime    @default(now())
+
+  visit     Visit          @relation(fields: [visitId], references: [id])
+  patient   PatientProfile @relation(fields: [patientId], references: [id])
+  documents Document[]
+}
+
+model Prescription {
+  id           String   @id @default(uuid())
+  visitId      String
+  doctorId     String
+  medication   String
+  dosage       String
+  frequency    String
+  durationDays Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  visit  Visit         @relation(fields: [visitId], references: [id])
+  doctor DoctorProfile @relation(fields: [doctorId], references: [id])
+}
+
+model Document {
+  id             String            @id @default(uuid())
+  ownerType      DocumentOwnerType
+  testResultId   String?
+  imagingStudyId String?
+  storageKey     String
+  mimeType       String
+  sizeBytes      Int
+  checksum       String?
+  uploadedById   String
+  uploadedAt     DateTime          @default(now())
+
+  testResult   TestResult?   @relation(fields: [testResultId], references: [id])
+  imagingStudy ImagingStudy? @relation(fields: [imagingStudyId], references: [id])
+}
+
+model Consent {
+  id        String    @id @default(uuid())
+  patientId String
+  doctorId  String?
+  clinicId  String?
+  scope     String    @default("FULL_RECORD")
+  grantedAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  patient PatientProfile @relation(fields: [patientId], references: [id])
+  doctor  DoctorProfile?  @relation(fields: [doctorId], references: [id])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String
+  deviceInfo String?
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?
+  action       String
+  targetType   String
+  targetId     String?
+  reason       String?
+  ipAddress    String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  actor User? @relation("ActorAuditLogs", fields: [actorUserId], references: [id])
+}
